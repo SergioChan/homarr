@@ -834,6 +834,9 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      with-env:
+        specifier: ^1.1.1
+        version: 1.1.1
 
   packages/common:
     dependencies:
@@ -10764,6 +10767,11 @@ packages:
     resolution: {integrity: sha512-LZNJgPzfKR+/J3cHkxcpHKpKKvGfDZVPS4hfJCc4cCG0CgYzvlD6yE/S3CIL/Yt91ak327YCpiF/0MyeZHEHKA==}
     engines: {node: '>= 12.0.0'}
 
+  with-env@1.1.1:
+    resolution: {integrity: sha512-LvVwoF7VcT4reKyfY364+3NiM6GF7+PGnLpidByC+Pis7RsfW1kNiAI15AF0GXNPb+eVxeyaMvc4Q6LQxu4USQ==}
+    engines: {node: '>= 0.10'}
+    deprecated: Use dotenv package instead
+
   word-wrap@1.2.5:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
@@ -20381,6 +20389,8 @@ snapshots:
       stack-trace: 0.0.10
       triple-beam: 1.4.1
       winston-transport: 4.9.0
+
+  with-env@1.1.1: {}
 
   word-wrap@1.2.5: {}
 
