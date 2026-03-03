@@ -1,13 +1,12 @@
-import { z } from "zod/v4";
+import { getAlbumInfo, getAllAlbums, getMyUser, getServerStatistics, init, searchUsers } from "@immich/sdk";
 
-import { ResponseError } from "@homarr/common/server";
-import { fetchWithTrustedCertificatesAsync } from "@homarr/core/infrastructure/http";
+import { createLogger } from "@homarr/core/infrastructure/logs";
+import { ImageProxy } from "@homarr/image-proxy";
 
 import type { IntegrationInput, IntegrationTestingInput } from "../base/integration";
 import { Integration } from "../base/integration";
 import type { SessionStore } from "../base/session-store";
 import { createSessionStore } from "../base/session-store";
-import { TestConnectionError } from "../base/test-connection/test-connection-error";
 import type { TestingResult } from "../base/test-connection/test-connection-service";
 
 export interface ImmichServerStats {
@@ -27,14 +26,15 @@ export interface ImmichAsset {
   id: string;
   deviceAssetId: string;
   originalPath: string;
-  resized: boolean;
   thumbhash: string | null;
   fileModifiedAt: string;
   fileCreatedAt: string;
   updatedAt: string;
-  isReadOnly: boolean;
   type: "IMAGE" | "VIDEO" | "AUDIO" | "OTHER";
+  publicLink: string;
 }
+
+const logger = createLogger({ module: "immich-integration" });
 
 export class ImmichIntegration extends Integration {
   private readonly sessionStore: SessionStore<Record<string, unknown>>;
@@ -45,104 +45,81 @@ export class ImmichIntegration extends Integration {
   }
 
   public async getServerStatsAsync(): Promise<ImmichServerStats> {
-    const response = await fetchWithTrustedCertificatesAsync(this.url("/api/server/stats"), {
-      headers: this.getAuthHeaders(),
-    });
-
-    if (!response.ok) {
-      throw new ResponseError(response);
-    }
-
-    const data = await response.json();
-    return serverStatsSchema.parseAsync(data);
+    this.initClient();
+    const [statistics, users] = await Promise.all([getServerStatistics(), searchUsers()]);
+    return {
+      photoCount: statistics.photos,
+      userCount: users.length,
+      totalLibraryUsageInBytes: statistics.usage,
+      videoCount: statistics.videos,
+    };
   }
 
   public async getAlbumAsync(albumId: string): Promise<ImmichAlbum> {
-    const response = await fetchWithTrustedCertificatesAsync(this.url(`/api/albums/${albumId}`), {
-      headers: this.getAuthHeaders(),
-    });
-
-    if (!response.ok) {
-      throw new ResponseError(response);
-    }
-
-    const data = await response.json();
-    return albumSchema.parseAsync(data);
+    this.initClient();
+    const album = await getAlbumInfo({ id: albumId });
+    const imageProxy = new ImageProxy();
+    return {
+      albumName: album.albumName,
+      assets: await Promise.all(
+        album.assets.map(async (asset) => {
+          const publicLink = await imageProxy.createImageAsync(
+            this.url(`/api/assets/${asset.id}/original`).toString(),
+            {
+              "x-api-key": this.getSecretValue("apiKey"),
+            },
+          );
+          return {
+            id: asset.id,
+            type: asset.type,
+            deviceAssetId: asset.deviceAssetId,
+            thumbhash: asset.thumbhash,
+            fileCreatedAt: asset.fileCreatedAt,
+            fileModifiedAt: asset.fileModifiedAt,
+            originalPath: asset.originalPath,
+            updatedAt: asset.updatedAt,
+            publicLink,
+          };
+        }),
+      ),
+      id: album.id,
+    };
   }
 
   public async getAlbumsAsync(): Promise<
-    Array<{
+    {
       id: string;
       albumName: string;
       assetCount: number;
-    }>
+    }[]
   > {
-    const response = await fetchWithTrustedCertificatesAsync(this.url("/api/albums?shared=false"), {
-      headers: this.getAuthHeaders(),
-    });
-
-    if (!response.ok) {
-      throw new ResponseError(response);
-    }
-
-    const data = await response.json();
-    return z
-      .array(
-        z.object({
-          id: z.string(),
-          albumName: z.string(),
-          assetCount: z.number(),
-        }),
-      )
-      .parseAsync(data);
+    this.initClient();
+    const albums = await getAllAlbums({});
+    return albums.map((album) => ({ id: album.id, albumName: album.albumName, assetCount: album.assetCount }));
   }
 
   private getAuthHeaders() {
-    const apiKey = this.getSecrets().find((secret) => secret.kind === "apiKey");
-    if (!apiKey) {
-      throw new Error("Immich API key not found");
-    }
+    const apiKey = this.getSecretValue("apiKey");
+
     return {
-      "x-api-key": apiKey.value,
+      "x-api-key": apiKey,
       "User-Agent": "Homarr",
     };
   }
 
   protected async testingAsync(_: IntegrationTestingInput): Promise<TestingResult> {
-    const response = await fetchWithTrustedCertificatesAsync(this.url("/api/server/stats"), {
-      headers: this.getAuthHeaders(),
-    });
-
-    if (!response.ok) {
-      return TestConnectionError.StatusResult(response);
-    }
-
+    this.initClient();
+    const user = await getMyUser();
+    logger.debug(`Logged in as ${user.name} (${user.id})`);
     return { success: true };
   }
+
+  /**
+   * Sets the credentials and prepares the client for calls.
+   * Must be called before any other functions.
+   * @private
+   */
+  private initClient() {
+    init({ baseUrl: this.url("/api").toString(), apiKey: this.getSecretValue("apiKey") });
+  }
 }
-
-const serverStatsSchema = z.object({
-  photos: z.number().int(),
-  videos: z.number().int(),
-  usage: z.number().int(),
-  usageByUser: z.array(z.object({}).passthrough()),
-});
-
-const assetSchema = z.object({
-  id: z.string(),
-  deviceAssetId: z.string(),
-  originalPath: z.string(),
-  resized: z.boolean(),
-  thumbhash: z.string().nullable(),
-  fileModifiedAt: z.string(),
-  fileCreatedAt: z.string(),
-  updatedAt: z.string(),
-  isReadOnly: z.boolean(),
-  type: z.enum(["IMAGE", "VIDEO", "AUDIO", "OTHER"]),
-});
-
-const albumSchema = z.object({
-  id: z.string(),
-  albumName: z.string(),
-  assets: z.array(assetSchema),
-});
